@@ -100,9 +100,16 @@ pub fn sign_code_directory(
         hasher.finalize().into()
     };
 
+    // PATCH: eContent PHAI chua CodeDirectory bytes (khong phai None).
+    // iOS tu choi CMS voi eContent rong -> 0xe8008019.
+    use der::asn1::OctetString;
+    let econtent_octet = OctetString::new(data)
+        .map_err(|e| signing_err("Failed to create eContent", e))?;
+    let econtent_any = Any::encode_from(&econtent_octet)
+        .map_err(|e| signing_err("Failed to encode eContent as Any", e))?;
     let encap_content_info = EncapsulatedContentInfo {
         econtent_type: const_oid::db::rfc5911::ID_DATA,
-        econtent: None,
+        econtent: Some(econtent_any),
     };
 
     let digest_algorithm = AlgorithmIdentifierOwned {
@@ -262,7 +269,7 @@ fn build_apple_der_attribute(oid: ObjectIdentifier, value_der: &[u8]) -> Result<
 pub fn build_cdhash_plist(sha1: Option<&[u8; 20]>, sha256: &[u8; 32]) -> Vec<u8> {
     use plist::{Dictionary, Value};
 
-    let mut cdhashes = vec![Value::Data(sha256.to_vec())];
+    let mut cdhashes = vec![Value::Data(sha256[..20].to_vec())];
     if let Some(sha1) = sha1 {
         cdhashes.insert(0, Value::Data(sha1.to_vec()));
     }

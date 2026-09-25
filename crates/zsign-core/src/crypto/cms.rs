@@ -237,11 +237,11 @@ fn build_apple_der_attribute(oid: ObjectIdentifier, value_der: &[u8]) -> Result<
 ///
 /// Creates an XML plist with a `cdhashes` array enumerating the digests of
 /// every CodeDirectory present in the signature, matching Apple's own output:
-/// - sha256-only: a single 20-byte entry, the truncated SHA-256 CDHash
-/// - legacy dual: `[SHA-1 CDHash, truncated SHA-256 CDHash]`
+/// - sha256-only: a single 32-byte entry, the full SHA-256 CDHash
+/// - legacy dual: `[20-byte SHA-1 CDHash, 32-byte SHA-256 CDHash]`
 ///
-/// A zeroed SHA-1 entry in sha256-only output is rejected by Apple's
-/// verifier ("invalid signature (code or signature have been modified)").
+/// In SHA-256-only mode, `sha1` is `None` and only the full SHA-256
+/// CDHash appears, matching Apple's TN3127 spec.
 ///
 /// # Arguments
 ///
@@ -254,7 +254,7 @@ fn build_apple_der_attribute(oid: ObjectIdentifier, value_der: &[u8]) -> Result<
 pub fn build_cdhash_plist(sha1: Option<&[u8; 20]>, sha256: &[u8; 32]) -> Vec<u8> {
     use plist::{Dictionary, Value};
 
-    let mut cdhashes = vec![Value::Data(sha256[..20].to_vec())];
+    let mut cdhashes = vec![Value::Data(sha256.to_vec())];
     if let Some(sha1) = sha1 {
         cdhashes.insert(0, Value::Data(sha1.to_vec()));
     }

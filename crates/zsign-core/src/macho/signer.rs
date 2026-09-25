@@ -105,9 +105,11 @@ impl SigningContext {
         }
 
         let hashes = SpecialSlotHashes {
-            requirements: dual_hash(&requirements),
-            entitlements: entitlements_blob.as_ref().map(|b| dual_hash(b)),
-            der_entitlements: der_entitlements_blob.as_ref().map(|b| dual_hash(b)),
+            // PATCH: Hash CONTENT thôi, bỏ 8 bytes blob header (magic 4 + length 4).
+            // iOS expect hash của payload, không phải full blob.
+            requirements: dual_hash(if requirements.len() > 8 { &requirements[8..] } else { &requirements }),
+            entitlements: entitlements_blob.as_ref().map(|b| dual_hash(if b.len() > 8 { &b[8..] } else { b })),
+            der_entitlements: der_entitlements_blob.as_ref().map(|b| dual_hash(if b.len() > 8 { &b[8..] } else { b })),
             info: info_plist.map(dual_hash),
             resources: code_resources.map(dual_hash),
         };

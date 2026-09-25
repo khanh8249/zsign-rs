@@ -27,9 +27,10 @@
 
 use crate::crypto::SigningCredentials;
 use crate::extract_entitlements_from_profile;
-use crate::ipa::{CompressionLevel, IpaSigner};
+use crate::ipa::{CompressionLevel, IpaSigner, ProfileMap};
 use crate::macho::{sign_macho, MachOFile};
 use crate::{Error, Result};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// iOS code signing tool with builder pattern API.
@@ -77,6 +78,7 @@ use std::path::{Path, PathBuf};
 pub struct ZSign {
     credentials: Option<SigningCredentials>,
     provisioning_profile: Option<PathBuf>,
+    provisioning_profiles: ProfileMap,
     compression_level: CompressionLevel,
     bundle_id: Option<String>,
     bundle_name: Option<String>,
@@ -102,6 +104,7 @@ impl ZSign {
         Self {
             credentials: None,
             provisioning_profile: None,
+            provisioning_profiles: HashMap::new(),
             compression_level: CompressionLevel::DEFAULT,
             bundle_id: None,
             bundle_name: None,
@@ -153,6 +156,14 @@ impl ZSign {
     /// ```
     pub fn provisioning_profile(mut self, path: impl AsRef<Path>) -> Self {
         self.provisioning_profile = Some(path.as_ref().to_path_buf());
+        self
+    }
+
+    /// PATCH: Set per-bundle profiles cho nested bundles (extension, framework).
+    ///
+    /// Key = bundle identifier, Value = path tới .mobileprovision.
+    pub fn provisioning_profiles(mut self, map: ProfileMap) -> Self {
+        self.provisioning_profiles = map;
         self
     }
 
@@ -395,6 +406,9 @@ impl ZSign {
         if let Some(ref profile_path) = self.provisioning_profile {
             signer = signer.provisioning_profile(profile_path);
         }
+        if !self.provisioning_profiles.is_empty() {
+            signer = signer.provisioning_profiles(self.provisioning_profiles.clone());
+        }
 
         if let Some(ref id) = self.bundle_id {
             signer = signer.bundle_id(id);
@@ -436,6 +450,9 @@ impl ZSign {
         signer = signer.allow_encrypted(self.allow_encrypted);
         if let Some(ref profile) = self.provisioning_profile {
             signer = signer.provisioning_profile(profile);
+        }
+        if !self.provisioning_profiles.is_empty() {
+            signer = signer.provisioning_profiles(self.provisioning_profiles.clone());
         }
         if let Some(ref bundle_id) = self.bundle_id {
             signer = signer.bundle_id(bundle_id.as_str());

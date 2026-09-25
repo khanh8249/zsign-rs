@@ -62,7 +62,6 @@ use crate::crypto::SigningCredentials;
 use crate::macho::{sign_any_macho, sign_macho, MachOFile};
 use crate::{Error, Result};
 use rayon::prelude::*;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -109,9 +108,6 @@ use walkdir::WalkDir;
 /// Provisioning profile bytes and their extracted entitlements.
 type ProfilePayload = (Option<Vec<u8>>, Option<Vec<u8>>);
 
-/// Per-bundle profile map: bundle_id -> path to .mobileprovision file.
-pub type ProfileMap = HashMap<String, PathBuf>;
-
 pub struct IpaSigner<'a> {
     /// Reference to signing credentials; `None` signs ad-hoc
     credentials: Option<&'a SigningCredentials>,
@@ -119,9 +115,6 @@ pub struct IpaSigner<'a> {
     compression_level: CompressionLevel,
     /// Path to provisioning profile to embed as embedded.mobileprovision
     provisioning_profile_path: Option<PathBuf>,
-    /// Per-bundle profiles map (bundle_id -> profile path).
-    /// Dùng cho extension/framework khi sign nested bundles.
-    provisioning_profiles: ProfileMap,
     /// Override bundle identifier for the main app bundle
     bundle_id: Option<String>,
     /// Override display name for the main app bundle
@@ -149,7 +142,6 @@ impl<'a> IpaSigner<'a> {
             credentials: Some(credentials),
             compression_level: CompressionLevel::DEFAULT,
             provisioning_profile_path: None,
-            provisioning_profiles: HashMap::new(),
             bundle_id: None,
             bundle_name: None,
             bundle_version: None,
@@ -166,7 +158,6 @@ impl<'a> IpaSigner<'a> {
             credentials: None,
             compression_level: CompressionLevel::DEFAULT,
             provisioning_profile_path: None,
-            provisioning_profiles: HashMap::new(),
             bundle_id: None,
             bundle_name: None,
             bundle_version: None,
@@ -192,15 +183,6 @@ impl<'a> IpaSigner<'a> {
     /// where errors can be properly propagated.
     pub fn provisioning_profile(mut self, path: impl AsRef<Path>) -> Self {
         self.provisioning_profile_path = Some(path.as_ref().to_path_buf());
-        self
-    }
-
-    /// PATCH: Set per-bundle profiles map (cho extension/framework).
-    ///
-    /// Key = bundle identifier (e.g. "com.example.app.extension")
-    /// Value = path tới .mobileprovision file cho bundle đó.
-    pub fn provisioning_profiles(mut self, map: ProfileMap) -> Self {
-        self.provisioning_profiles = map;
         self
     }
 
@@ -921,8 +903,7 @@ impl<'a> IpaSigner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-use std::fs;
+    use std::fs;
     use std::io::Write;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;

@@ -32,7 +32,7 @@ use cms::cert::CertificateChoices;
 use cms::signed_data::{EncapsulatedContentInfo, SignerIdentifier};
 use const_oid::ObjectIdentifier;
 use der::asn1::SetOfVec;
-use der::{Any, Encode, Tag};
+use der::{asn1::OctetString, Any, Encode, Tag};
 use sha2::{Digest, Sha256};
 use spki::AlgorithmIdentifierOwned;
 use x509_cert::attr::Attribute;
@@ -208,8 +208,10 @@ fn build_apple_octet_string_attribute(
     oid: ObjectIdentifier,
     value_bytes: &[u8],
 ) -> Result<Attribute> {
-    let attr_value = Any::new(Tag::OctetString, value_bytes)
-        .map_err(|e| signing_err("Failed to create attribute value", e))?;
+    // PATCH: Dung OctetString::new de encode DER dung.
+    // Any::new(Tag::OctetString, ...) KHONG encode length dung.
+    let attr_value = OctetString::new(value_bytes)
+        .map_err(|e| signing_err("Failed to create octet string", e))?;
 
     let mut values = SetOfVec::new();
     values

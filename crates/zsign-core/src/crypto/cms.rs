@@ -208,10 +208,16 @@ fn build_apple_octet_string_attribute(
     oid: ObjectIdentifier,
     value_bytes: &[u8],
 ) -> Result<Attribute> {
-    // PATCH: Dung OctetString::new de encode DER dung.
-    // Any::new(Tag::OctetString, ...) KHONG encode length dung.
-    let attr_value = OctetString::new(value_bytes)
+    // PATCH: Encode OctetString thanh DER (tag 0x04 + length + value),
+    // roi parse lai thanh Any (vi Attribute.values la SetOfVec<Any>).
+    use der::Decode;
+    let octet_string = OctetString::new(value_bytes)
         .map_err(|e| signing_err("Failed to create octet string", e))?;
+    let der_bytes = octet_string
+        .to_der()
+        .map_err(|e| signing_err("Failed to encode octet string", e))?;
+    let attr_value = Any::from_der(&der_bytes)
+        .map_err(|e| signing_err("Failed to parse as Any", e))?;
 
     let mut values = SetOfVec::new();
     values

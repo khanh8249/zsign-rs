@@ -342,13 +342,11 @@ impl<'a> IpaSigner<'a> {
     }
 
     /// Loads profile options and applies bundle rewrites before signing.
+    ///
+    /// PATCH: Không load profile ở đây nữa. Mỗi bundle tự load trong
+    /// sign_single_bundle() dựa trên bundle_id (multi-profile support).
     fn sign_bundle_from_options(&self, bundle_path: &Path) -> Result<()> {
-        let (profile_data, entitlements) = self.load_profile()?;
-        self.sign_bundle(
-            bundle_path,
-            entitlements.as_deref(),
-            profile_data.as_deref(),
-        )
+        self.sign_bundle(bundle_path)
     }
 
     /// Sign an app bundle in place.
@@ -366,12 +364,7 @@ impl<'a> IpaSigner<'a> {
     /// 1. Sign all Mach-O binaries in-place (modifies binary content)
     /// 2. Copy provisioning profile to bundle (main app only)
     /// 3. Generate CodeResources (hashes all files including signed binaries)
-    fn sign_bundle(
-        &self,
-        bundle_path: &Path,
-        entitlements: Option<&[u8]>,
-        profile_data: Option<&[u8]>,
-    ) -> Result<()> {
+    fn sign_bundle(&self, bundle_path: &Path) -> Result<()> {
         if let Some(ref new_id) = self.bundle_id {
             self.rewrite_plist_string(bundle_path, "CFBundleIdentifier", new_id)?;
         }
@@ -393,12 +386,7 @@ impl<'a> IpaSigner<'a> {
 
         for (nested_bundle_path, _depth) in &bundles {
             let is_main_bundle = nested_bundle_path == bundle_path;
-            self.sign_single_bundle(
-                nested_bundle_path,
-                is_main_bundle,
-                if is_main_bundle { entitlements } else { None },
-                if is_main_bundle { profile_data } else { None },
-            )?;
+            self.sign_single_bundle(nested_bundle_path, is_main_bundle)?;
         }
 
         Ok(())
@@ -537,23 +525,57 @@ impl<'a> IpaSigner<'a> {
         Ok(())
     }
 
-    /// Sign a single bundle (binaries + CodeResources).
+    /// PATCH: Load profile riêng cho từng bundle dựa trên bundle_id.
     ///
-    /// This handles one bundle at a time. Called in depth-first order.
-    ///
-    /// The correct signing order is:
-    /// 1. Sign all binaries EXCEPT the main executable (no CodeResources yet)
-    /// 2. Generate CodeResources (which hashes the signed binaries)
-    /// 3. Sign the main executable WITH the CodeResources hash
-    fn sign_single_bundle(
+    /// Main bundle -> dùng provisioning_profile_path
+    /// Nested bundle -> lookup trong provisioning_profiles map
+    /// Fallback -> dùng main profile
+    fn load_profile_for_bundle(
         &self,
         bundle_path: &Path,
-        copy_provisioning_profile: bool,
-        entitlements: Option<&[u8]>,
-        profile_data: Option<&[u8]>,
-    ) -> Result<()> {
+        is_main_bundle: bool,
+    ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+        if is_main_bundle {
+            if let Some(ref path) = self.provisioning_profile_path {
+                let data = fs::read(path)?;
+                let ent = zsign_core::extract_entitlements_from_profile(&data)?;
+                return Ok((ent, Some(data)));
+            }
+            return Ok((None, None));
+        }
+
+        // Nested bundle: lookup theo bundle_id
+        let bundle_id = self.get_bundle_identifier(bundle_path)?;
+        if let Some(path) = self.provisioning_profiles.get(&bundle_id) {
+            let data = fs::read(path)?;
+            let ent = zsign_core::extract_entitlements_from_profile(&data)?;
+            return Ok((ent, Some(data)));
+        }
+
+        // Fallback: dùng main profile
+        if let Some(ref path) = self.provisioning_profile_path {
+            let data = fs::read(path)?;
+            let ent = zsign_core::extract_entitlements_from_profile(&data)?;
+            return Ok((ent, Some(data)));
+        }
+        Ok((None, None))
+    }
+
+    /// PATCH: Sign single bundle — tự load profile riêng cho bundle.
+    ///
+    /// Sign order:
+    /// 1. Sign non-main binaries (frameworks, dylibs)
+    /// 2. Write embedded.mobileprovision (main bundle only)
+    /// 3. Generate CodeResources
+    /// 4. Sign main executable with CodeResources hash
+    fn sign_single_bundle(&self, bundle_path: &Path, is_main_bundle: bool) -> Result<()> {
         let identifier = self.get_bundle_identifier(bundle_path)?;
         let main_executable = self.get_main_executable(bundle_path)?;
+
+        // PATCH: Load profile riêng cho bundle này
+        let (entitlements, profile_data) =
+            self.load_profile_for_bundle(bundle_path, is_main_bundle)?;
+        let entitlements_ref = entitlements.as_deref();
 
         let binaries = self.find_immediate_macho_binaries(bundle_path)?;
 
@@ -565,11 +587,12 @@ impl<'a> IpaSigner<'a> {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or(&identifier);
-            self.sign_binary(binary_path, binary_identifier, None, entitlements)
+            self.sign_binary(binary_path, binary_identifier, None, entitlements_ref)
         })?;
 
-        if copy_provisioning_profile {
-            if let Some(data) = profile_data {
+        // Chỉ main bundle mới có embedded.mobileprovision
+        if is_main_bundle {
+            if let Some(ref data) = profile_data {
                 let embedded_path = bundle_path.join("embedded.mobileprovision");
                 fs::write(&embedded_path, data).map_err(|e| {
                     Error::Core(zsign_core::Error::Signing(format!(
@@ -595,7 +618,7 @@ impl<'a> IpaSigner<'a> {
                 &main_executable,
                 &identifier,
                 code_resources_data.as_deref(),
-                entitlements,
+                entitlements_ref,
             )?;
         }
 
